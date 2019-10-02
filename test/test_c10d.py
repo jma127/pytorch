@@ -3100,6 +3100,29 @@ class CommTest(MultiProcessTestCase):
 
     @requires_nccl()
     @skip_if_not_multigpu
+    def test_nccl_timeout(self):
+        store = c10d.FileStore(self.file_name, self.world_size)
+        os.environ["NCCL_BLOCKING_WAIT"] = "1"
+
+        # Initialize process_group.
+        timeout = 1
+        c10d.distributed_c10d.init_process_group(
+            backend=dist.Backend.NCCL, store=store, world_size=2, rank=self.rank,
+            timeout=timedelta(seconds=timeout))
+        c10d.distributed_c10d.all_reduce(torch.rand(10).cuda(self.rank))
+
+        if self.rank == 0:
+            # This should timeout in about 1 second.
+            start = time.time()
+            with self.assertRaises(RuntimeError):
+                c10d.distributed_c10d.all_reduce(torch.rand(10).cuda(self.rank))
+
+            total_time = time.time() - start
+
+            self.assertLess(abs(total_time - timeout), 0.5)
+
+    @requires_nccl()
+    @skip_if_not_multigpu
     def test_broadcast_coalesced_nccl(self):
         store = c10d.FileStore(self.file_name, self.world_size)
         process_group = c10d.ProcessGroupNCCL(store, self.rank, self.world_size)
